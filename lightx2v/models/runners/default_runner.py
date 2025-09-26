@@ -10,8 +10,7 @@ from requests.exceptions import RequestException
 
 from lightx2v.utils.envs import *
 from lightx2v.utils.generate_task_id import generate_task_id
-from lightx2v.utils.memory_profiler import peak_memory_decorator
-from lightx2v.utils.profiler import *
+from lightx2v.utils.profiler import ProfilingContext, ProfilingContext4Debug
 from lightx2v.utils.utils import save_to_video, vae_to_comfyui_image
 
 from .base_runner import BaseRunner
@@ -30,7 +29,6 @@ class DefaultRunner(BaseRunner):
         if not self.has_prompt_enhancer:
             self.config.use_prompt_enhancer = False
         self.set_init_device()
-        self.init_scheduler()
 
     def init_modules(self):
         logger.info("Initializing runner modules...")
@@ -38,7 +36,6 @@ class DefaultRunner(BaseRunner):
             self.load_model()
         elif self.config.get("lazy_load", False):
             assert self.config.get("cpu_offload", False)
-        self.model.set_scheduler(self.scheduler)  # set scheduler to model
         if self.config["task"] == "i2v":
             self.run_input_encoder = self._run_input_encoder_local_i2v
         elif self.config["task"] == "flf2v":
@@ -47,9 +44,6 @@ class DefaultRunner(BaseRunner):
             self.run_input_encoder = self._run_input_encoder_local_t2v
         elif self.config["task"] == "vace":
             self.run_input_encoder = self._run_input_encoder_local_vace
-        if self.config.get("compile", False):
-            logger.info(f"[Compile] Compile all shapes: {self.config.get('compile_shapes', [])}")
-            self.model.compile(self.config.get("compile_shapes", []))
 
     def set_init_device(self):
         if self.config.cpu_offload:
@@ -66,7 +60,7 @@ class DefaultRunner(BaseRunner):
         else:
             raise ValueError(f"Unsupported VFI model: {self.config['video_frame_interpolation']['algo']}")
 
-    @ProfilingContext4DebugL2("Load models")
+    @ProfilingContext("Load models")
     def load_model(self):
         self.model = self.load_transformer()
         self.text_encoders = self.load_text_encoder()
@@ -113,29 +107,25 @@ class DefaultRunner(BaseRunner):
     def set_progress_callback(self, callback):
         self.progress_callback = callback
 
-    @peak_memory_decorator
     def run_segment(self, total_steps=None):
         if total_steps is None:
             total_steps = self.model.scheduler.infer_steps
         for step_index in range(total_steps):
-            # only for single segment, check stop signal every step
-            if self.video_segment_num == 1:
-                self.check_stop()
             logger.info(f"==> step_index: {step_index + 1} / {total_steps}")
 
-            with ProfilingContext4DebugL1("step_pre"):
+            with ProfilingContext4Debug("step_pre"):
                 self.model.scheduler.step_pre(step_index=step_index)
 
-            with ProfilingContext4DebugL1("🚀 infer_main"):
+            with ProfilingContext4Debug("🚀 infer_main"):
                 self.model.infer(self.inputs)
 
-            with ProfilingContext4DebugL1("step_post"):
+            with ProfilingContext4Debug("step_post"):
                 self.model.scheduler.step_post()
 
             if self.progress_callback:
                 self.progress_callback(((step_index + 1) / total_steps) * 100, 100)
 
-        return self.model.scheduler.latents
+        return self.model.scheduler.latents, self.model.scheduler.generator
 
     def run_step(self):
         self.inputs = self.run_input_encoder()
@@ -143,7 +133,7 @@ class DefaultRunner(BaseRunner):
 
     def end_run(self):
         self.model.scheduler.clear()
-        del self.inputs
+        del self.inputs, self.model.scheduler
         if self.config.get("lazy_load", False) or self.config.get("unload_modules", False):
             if hasattr(self.model.transformer_infer, "weights_stream_mgr"):
                 self.model.transformer_infer.weights_stream_mgr.clear()
@@ -155,25 +145,23 @@ class DefaultRunner(BaseRunner):
         gc.collect()
 
     def read_image_input(self, img_path):
-        if isinstance(img_path, Image.Image):
-            img_ori = img_path
-        else:
-            img_ori = Image.open(img_path).convert("RGB")
+        img_ori = Image.open(img_path).convert("RGB")
         img = TF.to_tensor(img_ori).sub_(0.5).div_(0.5).unsqueeze(0).cuda()
         return img, img_ori
 
-    @ProfilingContext4DebugL2("Run Encoders")
+    @ProfilingContext("Run Encoders")
     def _run_input_encoder_local_i2v(self):
         prompt = self.config["prompt_enhanced"] if self.config["use_prompt_enhancer"] else self.config["prompt"]
         img, img_ori = self.read_image_input(self.config["image_path"])
         clip_encoder_out = self.run_image_encoder(img) if self.config.get("use_image_encoder", True) else None
+        os.environ["F"]=str(self.config["target_video_length"])
         vae_encode_out = self.run_vae_encoder(img_ori if self.vae_encoder_need_img_original else img)
         text_encoder_output = self.run_text_encoder(prompt, img)
         torch.cuda.empty_cache()
         gc.collect()
         return self.get_encoder_output_i2v(clip_encoder_out, vae_encode_out, text_encoder_output, img)
 
-    @ProfilingContext4DebugL2("Run Encoders")
+    @ProfilingContext("Run Encoders")
     def _run_input_encoder_local_t2v(self):
         prompt = self.config["prompt_enhanced"] if self.config["use_prompt_enhancer"] else self.config["prompt"]
         text_encoder_output = self.run_text_encoder(prompt, None)
@@ -184,7 +172,7 @@ class DefaultRunner(BaseRunner):
             "image_encoder_output": None,
         }
 
-    @ProfilingContext4DebugL2("Run Encoders")
+    @ProfilingContext("Run Encoders")
     def _run_input_encoder_local_flf2v(self):
         prompt = self.config["prompt_enhanced"] if self.config["use_prompt_enhancer"] else self.config["prompt"]
         first_frame, _ = self.read_image_input(self.config["image_path"])
@@ -196,7 +184,7 @@ class DefaultRunner(BaseRunner):
         gc.collect()
         return self.get_encoder_output_i2v(clip_encoder_out, vae_encode_out, text_encoder_output)
 
-    @ProfilingContext4DebugL2("Run Encoders")
+    @ProfilingContext("Run Encoders")
     def _run_input_encoder_local_vace(self):
         prompt = self.config["prompt_enhanced"] if self.config["use_prompt_enhancer"] else self.config["prompt"]
         src_video = self.config.get("src_video", None)
@@ -221,30 +209,26 @@ class DefaultRunner(BaseRunner):
         self.get_video_segment_num()
         if self.config.get("lazy_load", False) or self.config.get("unload_modules", False):
             self.model = self.load_transformer()
+        self.init_scheduler()
         self.model.scheduler.prepare(self.inputs["image_encoder_output"])
         if self.config.get("model_cls") == "wan2.2" and self.config["task"] == "i2v":
             self.inputs["image_encoder_output"]["vae_encoder_out"] = None
 
-    @ProfilingContext4DebugL2("Run DiT")
+    @ProfilingContext("Run DiT")
     def run_main(self, total_steps=None):
         self.init_run()
-        if self.config.get("compile", False):
-            self.model.select_graph_for_compile()
         for segment_idx in range(self.video_segment_num):
-            logger.info(f"🔄 start segment {segment_idx + 1}/{self.video_segment_num}")
-            with ProfilingContext4DebugL1(f"segment end2end {segment_idx + 1}/{self.video_segment_num}"):
-                self.check_stop()
-                # 1. default do nothing
-                self.init_run_segment(segment_idx)
-                # 2. main inference loop
-                latents = self.run_segment(total_steps=total_steps)
-                # 3. vae decoder
-                self.gen_video = self.run_vae_decoder(latents)
-                # 4. default do nothing
-                self.end_run_segment()
+            # 1. default do nothing
+            self.init_run_segment(segment_idx)
+            # 2. main inference loop
+            latents, generator = self.run_segment(total_steps=total_steps)
+            # 3. vae decoder
+            self.gen_video = self.run_vae_decoder(latents)
+            # 4. default do nothing
+            self.end_run_segment()
         self.end_run()
 
-    @ProfilingContext4DebugL1("Run VAE Decoder")
+    @ProfilingContext("Run VAE Decoder")
     def run_vae_decoder(self, latents):
         if self.config.get("lazy_load", False) or self.config.get("unload_modules", False):
             self.vae_decoder = self.load_vae_decoder()
@@ -295,9 +279,7 @@ class DefaultRunner(BaseRunner):
 
                 save_to_video(self.gen_video, self.config.save_video_path, fps=fps, method="ffmpeg")
                 logger.info(f"✅ Video saved successfully to: {self.config.save_video_path} ✅")
-        if self.config.get("return_video", False):
-            return {"video": self.gen_video}
-        return {"video": None}
+        return {"video": self.gen_video}
 
     def run_pipeline(self, save_video=True):
         if self.config["use_prompt_enhancer"]:
