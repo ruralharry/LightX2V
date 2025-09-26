@@ -17,9 +17,15 @@ DTYPE_MAP = {
 
 
 @lru_cache(maxsize=None)
-def CHECK_PROFILING_DEBUG_LEVEL(target_level):
-    current_level = int(os.getenv("PROFILING_DEBUG_LEVEL", "0"))
-    return current_level >= target_level
+def CHECK_ENABLE_PROFILING_DEBUG():
+    ENABLE_PROFILING_DEBUG = os.getenv("ENABLE_PROFILING_DEBUG", "false").lower() == "true"
+    return ENABLE_PROFILING_DEBUG
+
+
+@lru_cache(maxsize=None)
+def CHECK_ENABLE_GRAPH_MODE():
+    ENABLE_GRAPH_MODE = os.getenv("ENABLE_GRAPH_MODE", "false").lower() == "true"
+    return ENABLE_GRAPH_MODE
 
 
 @lru_cache(maxsize=None)
