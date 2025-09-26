@@ -204,7 +204,7 @@ with gr.Blocks() as demo:
         with gr.Column():
             with gr.Accordion("I2V", open=True):  # 544x960
                 # image_path = gr.Image(label="输入图像")
-                image_path = gr.Image(label="输入图像",type="filepath")
+                image_path = gr.Image(label="输入图像")
             prompt = gr.Textbox(label="Prompt (Less than 200 Words)", placeholder="Enter your prompt here", lines=5)
             with gr.Row():
                 nf = gr.Slider(label="秒数", minimum=3, maximum=8, step=0.5, value=5)
@@ -244,7 +244,7 @@ with gr.Blocks() as demo:
 demo.queue(max_size=4).launch(
     server_name="0.0.0.0",
     inbrowser=True,
-    share=False,
+    share=True,
     server_port=12345,
     # quiet=True,
 )
