@@ -1,11 +1,11 @@
 import argparse
 
-import torch
 import torch.distributed as dist
 from loguru import logger
 
 from lightx2v.common.ops import *
 from lightx2v.models.runners.cogvideox.cogvidex_runner import CogvideoxRunner  # noqa: F401
+from lightx2v.models.runners.graph_runner import GraphRunner
 from lightx2v.models.runners.hunyuan.hunyuan_runner import HunyuanRunner  # noqa: F401
 from lightx2v.models.runners.qwen_image.qwen_image_runner import QwenImageRunner  # noqa: F401
 from lightx2v.models.runners.wan.wan_audio_runner import Wan22AudioRunner, WanAudioRunner  # noqa: F401
@@ -15,7 +15,7 @@ from lightx2v.models.runners.wan.wan_runner import Wan22MoeRunner, WanRunner  # 
 from lightx2v.models.runners.wan.wan_skyreels_v2_df_runner import WanSkyreelsV2DFRunner  # noqa: F401
 from lightx2v.models.runners.wan.wan_vace_runner import WanVaceRunner  # noqa: F401
 from lightx2v.utils.envs import *
-from lightx2v.utils.profiler import *
+from lightx2v.utils.profiler import ProfilingContext
 from lightx2v.utils.registry_factory import RUNNER_REGISTER
 from lightx2v.utils.set_config import print_config, set_config, set_parallel_config
 from lightx2v.utils.utils import seed_all
@@ -23,9 +23,14 @@ from lightx2v.utils.utils import seed_all
 
 def init_runner(config):
     seed_all(config.seed)
-    torch.set_grad_enabled(False)
-    runner = RUNNER_REGISTER[config.model_cls](config)
-    runner.init_modules()
+
+    if CHECK_ENABLE_GRAPH_MODE():
+        default_runner = RUNNER_REGISTER[config.model_cls](config)
+        default_runner.init_modules()
+        runner = GraphRunner(default_runner)
+    else:
+        runner = RUNNER_REGISTER[config.model_cls](config)
+        runner.init_modules()
     return runner
 
 
@@ -64,9 +69,8 @@ def main():
 
     parser.add_argument("--image_path", type=str, default="", help="The path to input image file for image-to-video (i2v) task")
     parser.add_argument("--last_frame_path", type=str, default="", help="The path to last frame file for first-last-frame-to-video (flf2v) task")
-    parser.add_argument("--audio_path", type=str, default="", help="The path to input audio file or directory for audio-to-video (s2v) task")
+    parser.add_argument("--audio_path", type=str, default="", help="The path to input audio file for audio-to-video (a2v) task")
 
-    # [Warning] For vace task, need refactor.
     parser.add_argument(
         "--src_ref_images",
         type=str,
@@ -86,7 +90,7 @@ def main():
         help="The file of the source mask. Default None.",
     )
 
-    parser.add_argument("--save_video_path", type=str, default=None, help="The path to save video path/file")
+    parser.add_argument("--save_video_path", type=str, default="./output_lightx2v.mp4", help="The path to save video path/file")
     args = parser.parse_args()
 
     # set config
@@ -99,10 +103,15 @@ def main():
 
     print_config(config)
 
-    with ProfilingContext4DebugL1("Total Cost"):
+    with ProfilingContext("Total Cost"):
         runner = init_runner(config)
         runner.run_pipeline()
 
+    from time import time as ttime
+    t0=ttime()
+    runner.run_pipeline()
+    t1=ttime()
+    print(t1-t0)
     # Clean up distributed process group
     if dist.is_initialized():
         dist.destroy_process_group()
