@@ -7,7 +7,6 @@ from lightx2v.models.networks.wan.lora_adapter import WanLoraWrapper
 from lightx2v.models.networks.wan.model import WanModel
 from lightx2v.models.runners.wan.wan_runner import MultiModelStruct, WanRunner
 from lightx2v.models.schedulers.wan.step_distill.scheduler import Wan22StepDistillScheduler, WanStepDistillScheduler
-from lightx2v.utils.profiler import *
 from lightx2v.utils.registry_factory import RUNNER_REGISTER
 
 
@@ -36,9 +35,10 @@ class WanDistillRunner(WanRunner):
 
     def init_scheduler(self):
         if self.config.feature_caching == "NoCaching":
-            self.scheduler = WanStepDistillScheduler(self.config)
+            scheduler = WanStepDistillScheduler(self.config)
         else:
             raise NotImplementedError(f"Unsupported feature_caching type: {self.config.feature_caching}")
+        self.model.set_scheduler(scheduler)
 
 
 class MultiDistillModelStruct(MultiModelStruct):
@@ -50,27 +50,24 @@ class MultiDistillModelStruct(MultiModelStruct):
         self.cur_model_index = -1
         logger.info(f"boundary step index: {self.boundary_step_index}")
 
-    @ProfilingContext4DebugL2("Swtich models in infer_main costs")
     def get_current_model_index(self):
         if self.scheduler.step_index < self.boundary_step_index:
             logger.info(f"using - HIGH - noise model at step_index {self.scheduler.step_index + 1}")
             self.scheduler.sample_guide_scale = self.config.sample_guide_scale[0]
-            if self.config.get("cpu_offload", False) and self.config.get("offload_granularity", "block") == "model":
-                if self.cur_model_index == -1:
-                    self.to_cuda(model_index=0)
-                elif self.cur_model_index == 1:  # 1 -> 0
-                    self.offload_cpu(model_index=1)
-                    self.to_cuda(model_index=0)
+            if self.cur_model_index == -1:
+                self.to_cuda(model_index=0)
+            elif self.cur_model_index == 1:  # 1 -> 0
+                self.offload_cpu(model_index=1)
+                self.to_cuda(model_index=0)
             self.cur_model_index = 0
         else:
             logger.info(f"using - LOW - noise model at step_index {self.scheduler.step_index + 1}")
             self.scheduler.sample_guide_scale = self.config.sample_guide_scale[1]
-            if self.config.get("cpu_offload", False) and self.config.get("offload_granularity", "block") == "model":
-                if self.cur_model_index == -1:
-                    self.to_cuda(model_index=1)
-                elif self.cur_model_index == 0:  # 0 -> 1
-                    self.offload_cpu(model_index=0)
-                    self.to_cuda(model_index=1)
+            if self.cur_model_index == -1:
+                self.to_cuda(model_index=1)
+            elif self.cur_model_index == 0:  # 0 -> 1
+                self.offload_cpu(model_index=0)
+                self.to_cuda(model_index=1)
             self.cur_model_index = 1
 
 
@@ -134,6 +131,7 @@ class Wan22MoeDistillRunner(WanDistillRunner):
 
     def init_scheduler(self):
         if self.config.feature_caching == "NoCaching":
-            self.scheduler = Wan22StepDistillScheduler(self.config)
+            scheduler = Wan22StepDistillScheduler(self.config)
         else:
             raise NotImplementedError(f"Unsupported feature_caching type: {self.config.feature_caching}")
+        self.model.set_scheduler(scheduler)
