@@ -4,7 +4,7 @@
 lightx2v_path=/home/ruralharry/x2v_anisora/LightX2V
 model_path=/home/ruralharry/x2v_anisora/LightX2V/models/anisora
 
-export CUDA_VISIBLE_DEVICES=0
+export CUDA_VISIBLE_DEVICES=1
 
 # set environment variables
 source ${lightx2v_path}/scripts/base/base.sh
