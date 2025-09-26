@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # set path and first
-lightx2v_path=/home/ruralharry/x2v/LightX2V/lightx2v
-model_path=/home/ruralharry/x2v/LightX2V/models/anisora
+lightx2v_path=/home/ruralharry/x2v_anisora/LightX2V/lightx2v
+model_path=/home/ruralharry/x2v_anisora/LightX2V/models/anisora
 
 export CUDA_VISIBLE_DEVICES=0
 
