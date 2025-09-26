@@ -158,12 +158,23 @@ def generate(prompt, img, seed, nf, motion, size_str, shift, step):
         prompt += " aesthetic score: 5.5. motion score: %s. " % motion
         prompt += "There is no text in the video."
 
-        # with open("%s/prompt_logs/%s.txt" % (now_dir,tt), "w") as ffff:
-        #     ffff.write(prompt)
-        # image_path="%s/prompt_logs/%s.png"% (now_dir,tt)
-        # Image.fromarray(img).save(image_path)
+        # 确保输出目录存在
+        os.makedirs(os.path.dirname(save_file), exist_ok=True)
 
-        # shutil.copy(image_path,image_path)
+        # 当使用非filepath类型时，需要保存上传的图片
+        img_path = "%s/temp/%s.png" % (now_dir, tt)
+        os.makedirs(os.path.dirname(img_path), exist_ok=True)
+        
+        # 根据不同的输入类型保存图片
+        if isinstance(img, str):
+            # 如果是文件路径
+            img_path = img
+        elif hasattr(img, 'save'):
+            # 如果是PIL图像对象
+            img.save(img_path)
+        else:
+            # 如果是numpy数组
+            Image.fromarray(img).save(img_path)
 
         seed = seed if seed >= 0 else random.randint(1, 999999)
         w,h=str2size[size_str]
@@ -172,8 +183,7 @@ def generate(prompt, img, seed, nf, motion, size_str, shift, step):
             nf=7
         more_config = {
             "prompt": prompt,
-            # "image_path": image_path,
-            "image_path": img,
+            "image_path": img_path,
             "save_video_path": save_file,
             "seed": seed,
             "target_video_length": int(nf) * 16 + 1,
@@ -189,12 +199,15 @@ def generate(prompt, img, seed, nf, motion, size_str, shift, step):
         video_update = gr.update(visible=True, value=save_file)
         seed_update = gr.update(visible=True, value=seed)
         return save_file, video_update, seed_update
-    except:
+    except Exception as e:
         info=traceback.format_exc()
         logger1_info(info)
+        gr.Error(f"处理过程中出现错误: {str(e)}")
+        # 返回默认值避免界面错误
+        return None, gr.update(), gr.update()
 
 
-with gr.Blocks() as demo:
+with gr.Blocks(css=".gradio-container {max-width: 95% !important;}") as demo:
     gr.Markdown("""
            <div style="text-align: center; font-size: 32px; font-weight: bold; margin-bottom: 20px;">
                AniSora-Bilibili动画视频生成模型
@@ -246,7 +259,10 @@ demo.queue(max_size=4).launch(
     inbrowser=True,
     share=True,
     server_port=12345,
-    # quiet=True,
+    quiet=False,
+    favicon_path=None,
+    allowed_paths=[os.getcwd()],
+    prevent_thread_lock=True
 )
 
 # from fastapi import FastAPI
